@@ -25,6 +25,8 @@ pub enum VerboseLoggingProvider {
     KernelGeneral,
     /// Microsoft-Windows-Privacy-Auditing-PermissiveLearningMode.
     PrivacyAuditingPermissiveLearningMode,
+    /// Microsoft-Windows-LearningMode-NetworkDecision.
+    LearningModeNetworkDecision,
 }
 
 /// Closed reason describing how a decoder outcome was handled.
@@ -57,6 +59,14 @@ pub enum VerboseLoggingOutcomeReason {
     ComInterfaceCall,
     /// The event was valid but did not describe an actionable denial.
     NotActionable,
+    /// The source reported an intentional explicit deny or allow-rule exclusion.
+    IntentionalNetworkPolicyDeny,
+    /// The source reported a direct connection blocked by proxy containment.
+    ProxyContainment,
+    /// The network event carried an unknown or unsupported stable reason.
+    UnknownNetworkReason,
+    /// The network event omitted endpoint data required for policy guidance.
+    IncompleteNetworkEndpoint,
 }
 
 impl VerboseLoggingOutcomeReason {
