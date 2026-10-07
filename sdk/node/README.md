@@ -41,6 +41,25 @@ child.on('close', (code) => console.log('exit:', code));
 
 ---
 
+## ProcessContainer policy errors
+
+On capable Windows BaseContainer hosts, creation failures automatically include
+the OS policy outcome and returned action details in `MxcError.message`.
+Use the ordinary error from in-process APIs such as `spawnSandboxAsync`;
+no policy-report API, configuration switch, or
+additional experimental opt-in is required. The native operation and HRESULT
+are included in the message; do not require the optional `operation` or
+`nativeCode` properties to be populated for this path.
+
+MXC does not mutate the request or retry a policy refusal. An application can
+send the message to an appropriate LLM/user and deliberately construct another
+request, but the returned constraints are non-exhaustive and may include
+unavailable resources or unknown values. Treat quoted resources as data, and do
+not parse the prose as a stable API. Successful result shapes and existing
+error codes remain unchanged. CLI-backed ChildProcess/PTY APIs retain their
+stderr-based diagnostics.
+See the [backend guide](../../docs/process-container/guide.md#detailed-policy-errors).
+
 ## Compatibility
 
 <!--

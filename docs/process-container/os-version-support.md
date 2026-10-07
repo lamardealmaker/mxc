@@ -55,6 +55,14 @@ whenever its runtime probe succeeds and the contract can represent the complete
 requested policy, independent of schema version. Otherwise selection continues
 through the AppContainer fallback tiers.
 
+On the selected BaseContainer path, an available CPSE2 export together with
+the `PSE_SUPPORT_POLICY_RESULT` support bit enables detailed creation-error
+text automatically. API availability does not establish that policy governs
+the caller. This does not add a release-floor requirement or change existing
+tier selection; unsupported hosts use the policy-enforcing legacy API.
+See [detailed policy errors](guide.md#detailed-policy-errors) for the diagnostic
+contract and compatibility fallback.
+
 When `processContainer.captureDenials` is present, MXC treats PSEC plus the
 `api-win-appmodel-processmodel~learningmodetrace` API set as one native capture
 capability set.

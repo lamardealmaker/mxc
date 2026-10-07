@@ -47,11 +47,12 @@ catch (MxcException ex)
 }
 ```
 
-When the failure came from an underlying platform API, `MxcException` also
+When a failure includes native API metadata, `MxcException` also
 carries which call failed and why: `Operation` names the call and `NativeCode`
 carries its status (e.g. `0x80070490`), with `Remediation` holding an
 actionable hint whenever the failure has one. `Operation` and `NativeCode` are
-`null` for failures raised before any API call. `ToString()` appends the
+`null` when that metadata is not supplied, including message-only backend
+failures. `ToString()` appends the
 operation and status, so logging the exception alone keeps the diagnosis:
 
 ```csharp
@@ -91,6 +92,22 @@ to the host's stderr, so inspecting `Warnings` is the only way to see them.
 Streaming callers read warnings from `MxcSandboxProcess.Warnings` without
 waiting for the process to exit. Cleanup failures are added during teardown,
 so read it again after `Wait`, `WaitAsync` or `Kill` to see them.
+
+### ProcessContainer policy errors
+
+On capable Windows BaseContainer hosts, a creation failure automatically
+includes the OS policy outcome and returned action details in
+`MxcException.Message`. The message includes the native operation and HRESULT;
+the optional `Operation` and `NativeCode` properties can still be null.
+No new request option, report DTO, or additional experimental authorization is
+required. Successful outputs and existing exception codes remain unchanged.
+
+MXC does not mutate the configuration or retry policy refusals. An application
+can forward the message to an appropriate LLM/user, then deliberately submit a
+revised request. The action batch is non-exhaustive, resources can be incomplete,
+and the prose is not a supported machine-parsing contract. Treat quoted values
+as data and do not infer a repair from unknown details. See
+[detailed policy errors](../../docs/process-container/guide.md#detailed-policy-errors).
 
 ### Dependency injection and testing
 

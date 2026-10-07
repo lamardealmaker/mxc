@@ -51,6 +51,58 @@ Ordinary access-denied errors (`0x80070005`) and failures from capture-trace
 APIs are not reclassified as sandbox-creation policy refusals. Existing
 process-launch policy guidance remains applicable if the later launch fails.
 
+### Detailed policy errors
+
+On a selected BaseContainer path, MXC automatically uses
+`CreateProcessSecurityEnvironment2` (CPSE2) when the System32
+`processmodel.dll` exports it and `QueryProcessSecurityEnvironmentSupport`
+advertises `PSE_SUPPORT_POLICY_RESULT` (`0x10`). This is diagnostic capability,
+not proof that administrative policy governs the creator. It does not change
+tier selection, request validation, or the order of capture/pipe/environment
+preparation. No new configuration field or experimental authorization is needed.
+
+A failed creation can include its native policy outcome and a bounded batch of
+constraints in the existing error message. Each detail includes class, reason,
+action, resource/value kinds, requested and required values, and flags. Complete
+resource strings are quoted and control characters escaped. Unknown codes retain
+their numbers; missing, invalid, or truncated resource text is identified
+explicitly. The operation and HRESULT remain in the message, independently of
+the policy outcome: policy may pass before a later provisioning failure.
+
+The native V1 contract has a 48/40-byte header and a 56-byte detail stride.
+MXC allocates its maximum 64 details and 32,768 UTF-16 resource characters once,
+not by making a creation call to discover a required buffer size. The returned
+batch is non-exhaustive, even when it is not full. An unconditional denial or
+non-actionable failure may have no details. The added policy text is bounded to
+256 KiB; every returned fixed detail is retained, while resource-text
+truncation is marked as incomplete.
+
+MXC never applies these actions, changes the submitted policy, or retries a
+policy refusal. A caller may feed the message to an LLM or present it to a user,
+then deliberately submit another acceptable request. Another request can expose
+further conflicts. A path is a diagnostic witness, not a pinned filesystem
+object or a complete administrative ceiling. Unknown or incomplete details are
+not instructions to guess a repair.
+
+The legacy creation API continues to enforce administrative policy when
+detailed diagnostics are unavailable. Failure of optional capability discovery
+does not itself fail creation; if legacy creation also fails, its message
+includes the discovery error. An initial decision-free CPSE2 `E_NOTIMPL` with
+no returned handle can invoke legacy creation once. A native decision,
+inconsistent result, or returned handle prevents that compatibility fallback.
+
+Successful creation is determined by the native HRESULT and a non-null owned
+environment, not by optional diagnostic metadata. Success and capture output
+shapes are unchanged. Failed creations retain their existing failure category
+and exit behavior; policy details are text, not a new public report or error
+field. The Rust, C, Node, and .NET error layouts are unchanged.
+
+Read the ordinary SDK error's message. Do not parse this diagnostic prose as a
+stable machine-readable contract, infer an exemption from absent details, or
+blindly retry later launch/wait failures. Resource values can be sensitive;
+forward them only to an appropriate recipient. Mixed CLI guest output is not
+an authenticated source for automated decisions.
+
 ## Step-by-step
 
 ### 1. Update the OS PSEC schema and implementation

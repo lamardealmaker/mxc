@@ -186,7 +186,7 @@ pub(crate) fn security_environment_failure_message(
     if matches!(
         error,
         LearningModeError::HResultCall {
-            function: "CreateProcessSecurityEnvironment",
+            function: "CreateProcessSecurityEnvironment" | "CreateProcessSecurityEnvironment2",
             code,
         } if *code == ERROR_ACCESS_DISABLED_BY_POLICY.to_hresult().0
     ) {
@@ -587,21 +587,25 @@ mod tests {
 
     #[test]
     fn policy_block_at_environment_creation_has_automatic_guidance() {
-        let function = "CreateProcessSecurityEnvironment";
-        for capture in [false, true] {
-            let error = LearningModeError::HResultCall {
-                function,
-                code: ERROR_ACCESS_DISABLED_BY_POLICY.to_hresult().0,
-            };
-            let message = security_environment_failure_message(&error, capture);
-            assert!(message.contains("IT-managed policy rule"));
-            assert!(message.contains("requested sandbox permissions"));
-            assert!(message.contains("system administrator"));
-            assert!(message.contains("1260"));
-            assert!(message.contains("0x800704EC"));
-            assert!(message.contains(function));
-            assert_eq!(message.starts_with("captureDenials:"), capture);
-            assert!(!message.contains("target executable"));
+        for function in [
+            "CreateProcessSecurityEnvironment",
+            "CreateProcessSecurityEnvironment2",
+        ] {
+            for capture in [false, true] {
+                let error = LearningModeError::HResultCall {
+                    function,
+                    code: ERROR_ACCESS_DISABLED_BY_POLICY.to_hresult().0,
+                };
+                let message = security_environment_failure_message(&error, capture);
+                assert!(message.contains("IT-managed policy rule"));
+                assert!(message.contains("requested sandbox permissions"));
+                assert!(message.contains("system administrator"));
+                assert!(message.contains("1260"));
+                assert!(message.contains("0x800704EC"));
+                assert!(message.contains(function));
+                assert_eq!(message.starts_with("captureDenials:"), capture);
+                assert!(!message.contains("target executable"));
+            }
         }
     }
 
@@ -611,6 +615,9 @@ mod tests {
             ("CreateProcessSecurityEnvironment", 0x80070005_u32 as i32),
             ("CreateProcessSecurityEnvironment", E_NOTIMPL.0),
             ("CreateProcessSecurityEnvironment", 1260),
+            ("CreateProcessSecurityEnvironment2", 0x80070005_u32 as i32),
+            ("CreateProcessSecurityEnvironment2", E_NOTIMPL.0),
+            ("CreateProcessSecurityEnvironment2", 1260),
             (
                 "StartLearningModeTrace",
                 ERROR_ACCESS_DISABLED_BY_POLICY.to_hresult().0,
