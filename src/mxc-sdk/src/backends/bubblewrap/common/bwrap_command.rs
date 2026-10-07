@@ -278,9 +278,7 @@ pub(crate) fn clearly_uncovered_cwd(request: &ExecutionRequest) -> Option<String
 
 #[cfg(any(target_os = "linux", test))]
 fn path_is_within(path: &str, parent: &str) -> bool {
-    parent == "/" && path.starts_with('/')
-        || path == parent
-        || (path.starts_with(parent) && path.as_bytes().get(parent.len()) == Some(&b'/'))
+    std::path::Path::new(path).starts_with(parent)
 }
 
 /// The default environment: `PATH`, `TERM`, and — when one resolves — `HOME`.
@@ -516,16 +514,26 @@ mod tests {
             request.working_directory = cwd.into();
             assert_eq!(clearly_uncovered_cwd(&request), None, "{cwd}");
         }
-        for mount in ["/home", "/home/user", "/home/user/data"] {
+        for mount in [
+            "/home",
+            "/home/user",
+            "/home/user/",
+            "/home//user/",
+            "/home/user/data",
+            "/home//user/data/",
+        ] {
             request.working_directory = "/home/user".into();
             request.policy.readonly_paths = vec![mount.into()];
             assert_eq!(clearly_uncovered_cwd(&request), None, "{mount}");
         }
-        request.policy.readonly_paths = vec!["/home/user2".into()];
-        assert_eq!(
-            clearly_uncovered_cwd(&request).as_deref(),
-            Some("/home/user")
-        );
+        for mount in ["/home/user2", "/home/user2/"] {
+            request.policy.readonly_paths = vec![mount.into()];
+            assert_eq!(
+                clearly_uncovered_cwd(&request).as_deref(),
+                Some("/home/user"),
+                "{mount}"
+            );
+        }
         request.policy.readonly_paths = vec!["/alias/../home/user".into()];
         assert_eq!(clearly_uncovered_cwd(&request), None);
         request.policy.readonly_paths = vec!["/".into()];
