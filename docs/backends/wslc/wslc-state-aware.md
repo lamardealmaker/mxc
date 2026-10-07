@@ -42,7 +42,7 @@ Sandbox daemon pattern.
 
 The daemon runs all SDK calls on a **single apartment-affine worker thread** (the WSLc SDK handles
 are not thread-agnostic). Today `exec` blocks that worker for the duration of the run, so commands
-against different sandboxes are serialized — correct, just not concurrent. See
+against different containers are serialized — correct, just not concurrent. See
 [Known limitations](#known-limitations).
 
 ## Components
@@ -109,7 +109,7 @@ from the host itself and not from other machines. WSLC installs it when the
 container starts rather than at provision, so a `windowsPort` that another
 process already holds on loopback fails the `start` phase, not `provision`.
 
-## Sandbox IDs
+## Container IDs
 
 `provision` mints an id of the form `wslc:<32 lowercase hex>` (`wslc:` + a UUID simple form).
 Raw SDK/FFI requests carry this id in `sandboxId` for every post-provision phase
@@ -284,7 +284,7 @@ proxy, validation rejections, and idle teardown. Fixtures live in
 The `wslc_state_aware_*.json` fixtures are **stateful** — unlike the one-shot configs, they cannot be
 run individually or in an arbitrary order:
 
-- **Order is mandatory.** A sandbox must go through `provision → start → exec… → stop → deprovision`.
+- **Order is mandatory.** A container must go through `provision → start → exec… → stop → deprovision`.
   `provision` is what boots the session and mints the id; every other phase fails without it
   (`start`/`exec` before provision → `not_provisioned` / `not_started`, and any phase after
   `deprovision` → `not_provisioned`).
@@ -302,7 +302,7 @@ fixtures **through the harness**, not by pointing `wxc-exec --config` at them di
 ## Known limitations
 
 - **Serialized exec (deferred).** Because the daemon's single worker thread blocks on
-  `WaitForSingleObject` for the whole `exec`, no other sandbox can provision or exec while one
+  `WaitForSingleObject` for the whole `exec`, no other container can provision or exec while one
   command runs, and a per-container single-flight `Busy` guard is not yet meaningful. The intended
   fix splits `exec` into an on-worker `ExecStart` (extract the thread-agnostic Win32 exit-event
   handle) + an off-thread wait + an on-worker `ExecReap`, with a per-container `in_flight` slot. This

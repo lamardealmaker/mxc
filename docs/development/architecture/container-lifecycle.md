@@ -1,4 +1,4 @@
-# MXC State-Aware Sandbox API
+# MXC State-Aware Container API
 
 > **Audience:** MXC developers
 
@@ -37,7 +37,7 @@
 
 ## 1. Summary
 
-This document proposes a state-aware sandbox API for MXC, surfaced alongside the existing
+This document proposes a state-aware container API for MXC, surfaced alongside the existing
 one-shot `spawnSandbox*` family. Five lifecycle phases are exposed at the SDK level:
 provision, start, exec, stop, deprovision. Each is a discrete call. Provision returns an
 opaque `SandboxId` string the caller persists and forwards to subsequent calls. The API
@@ -50,12 +50,12 @@ backend's participation mode (state-aware, ephemeral, or both) is declared by wh
 trait or traits it implements.
 
 The mental model: `spawnSandbox` is the composition of the five phases into one call.
-State-aware exposes them individually so callers can hold a sandbox between calls, run
+State-aware exposes them individually so callers can hold a container between calls, run
 multiple workloads inside it, and tear it down explicitly.
 
-Sandbox state is owned by the backend's underlying service. The `SandboxId` is the only
+Container state is owned by the backend's underlying service. The `SandboxId` is the only
 handle the caller gets; persisting it between calls is the caller's responsibility. MXC
-retains no state between calls and does not become a sandbox orchestrator. Backends with
+retains no state between calls and does not become a container orchestrator. Backends with
 no meaningful state continue to expose only the one-shot surface; state-aware
 participation is fully opt-in.
 
@@ -73,14 +73,14 @@ elaborates.
 ## 2. Context and motivation
 
 MXC's existing containment surface runs each invocation as a self-contained lifecycle: set
-up the sandbox, execute the workload, tear it down. This shape fits backends whose
-sandboxes carry no meaningful state between invocations.
+up the container, execute the workload, tear it down. This shape fits backends whose
+containers carry no meaningful state between invocations.
 
-It does not fit backends whose sandboxes are inherently persistent. A provisioned isolation
+It does not fit backends whose containers are inherently persistent. A provisioned isolation
 session has a long-lived user profile holding installed tools, configuration, and
 credentials. A WSL distribution is a long-lived Linux environment with its own filesystem
 and package set. A Hyper-V virtual machine is a running OS instance. A Docker container
-can host a service that lives across many client interactions. For all of these, sandbox
+can host a service that lives across many client interactions. For all of these, container
 state is not a side-effect of the workload; it is part of what the workload depends on. A
 one-shot API forces these backends to fold the full provision/start/exec/stop/deprovision
 sequence into every call, discarding any state the workload accumulated.
@@ -92,13 +92,13 @@ first-class concept. IsolationSession is the first such backend.
 The design holds three constraints throughout:
 
 - MXC does not take on responsibility for any persistent storage. The durable identifier
-  of a stateful sandbox belongs to the backend's underlying service; persisting it
+  of a stateful container belongs to the backend's underlying service; persisting it
   across calls is the caller's responsibility.
 - The contract supports easy plug-in by backend developers. Per-phase configuration is
   typed per-backend in a way that backends with different native lifecycle models can map
   cleanly.
-- MXC's charter stays scoped to managing and executing within sandboxes, ephemeral or
-  persistent. MXC is the conduit into sandbox APIs, not a state manager itself.
+- MXC's charter stays scoped to managing and executing within containers, ephemeral or
+  persistent. MXC is the conduit into container APIs, not a state manager itself.
 
 ## 3. Design philosophy
 
@@ -126,14 +126,14 @@ capability gaps with no-op stubs.
 ## 4. Lifecycle model
 
 The state-aware API exposes five lifecycle phases. Each is a discrete call. Together they
-compose into the full sandbox lifecycle that one-shot `spawnSandbox` runs end-to-end.
+compose into the full container lifecycle that one-shot `spawnSandbox` runs end-to-end.
 
 | Phase | Valid from state | Resulting state | Output | Purpose |
 |---|---|---|---|---|
-| `provision` | (not provisioned) | provisioned | `sandboxId`, optional metadata | Allocate the sandbox resource |
-| `start` | provisioned | running | optional metadata | Bring the sandbox to a state where it can host workloads |
+| `provision` | (not provisioned) | provisioned | `sandboxId`, optional metadata | Allocate the container resource |
+| `start` | provisioned | running | optional metadata | Bring the container to a state where it can host workloads |
 | `exec` | running | running | stdout, stderr, exit code | Run a workload; may be called any number of times |
-| `stop` | running | provisioned | optional metadata | Take the sandbox out of running; the provisioned resource remains |
+| `stop` | running | provisioned | optional metadata | Take the container out of running; the provisioned resource remains |
 | `deprovision` | provisioned | (not provisioned) | optional metadata | Release the provisioned resource; the `SandboxId` becomes invalid |
 
 The five phases form a small state machine over three states: not-provisioned,
@@ -166,7 +166,7 @@ backend section until they are universalised.
 ## 5. Identifiers
 
 The `SandboxId` returned by `provision` is the only identifier the caller uses to refer to
-the provisioned sandbox in later calls. It is an opaque string at every observable layer
+the provisioned container in later calls. It is an opaque string at every observable layer
 (TS SDK, JSON wire format, CLI output).
 
 The backend generates the `SandboxId` during `provision`. A backend whose underlying API
@@ -184,7 +184,7 @@ without a separate `containment` field on the wire (§7.1).
 Non-provision roots are deliberately backend-neutral and are not version-affine:
 an exact contract validates the phase fields, then a recognised `sandboxId`
 prefix selects the backend. Consequently, a v0.9 start/exec/stop/deprovision
-request can operate on a sandbox provisioned through a newer contract when the
+request can operate on a container provisioned through a newer contract when the
 caller holds its valid ID. Provision remains version- and backend-specific.
 
 The wire spec and the SDK observably disagree on *which* error fires for an
@@ -208,10 +208,10 @@ trait (§9.2). It carries the wire-format `containment` value for the backend (e
 Checked binding verifies it against the provision backend or the backend resolved
 from a later operation's ID. Exact adapters have already converted configuration
 into runtime values; dispatch does not navigate JSON. `ID_PREFIX` and `BACKEND_KEY` are deliberately distinct
-strings: `ID_PREFIX` is a compact tag chosen for sandbox-id brevity (e.g. `"iso"`)
+strings: `ID_PREFIX` is a compact tag chosen for container-id brevity (e.g. `"iso"`)
 while `BACKEND_KEY` is the full backend name shared with the SDK type system (e.g.
 `"isolation_session"`). Backends that pick a long `BACKEND_KEY` for SDK readability
-are not forced to repeat that length in every persisted sandbox id.
+are not forced to repeat that length in every persisted container id.
 
 The SDK exposes the id as a branded TypeScript string parameterised by backend:
 
@@ -443,7 +443,7 @@ Backend-routing fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `containment` | `ContainmentType` or `ContainmentBackend` member | One-shot: yes. State-aware: yes for `provision`, absent for `start` / `exec` / `stop` / `deprovision`. | Backend selection on calls that do not yet have a `sandboxId`. |
-| `sandboxId` | branded string | State-aware non-provision: yes. Otherwise absent. | Opaque sandbox id returned by `provision`. Carries the backend prefix used to route non-provision calls (§5). |
+| `sandboxId` | branded string | State-aware non-provision: yes. Otherwise absent. | Opaque container id returned by `provision`. Carries the backend prefix used to route non-provision calls (§5). |
 
 State-aware-only fields:
 
@@ -849,7 +849,7 @@ fields. Existing-exec proxy authoring is intentionally grouped at
 `network.runtimeConfig`; the SDK lifts it to the wire-level `runtimeConfig`.
 Cross-backend exec fields (`commandLine`, `cwd`,
 `env`, `timeout`) flow through the top-level `process` block. The typed SDK requires
-`commandLine`. The executor CLI supplies operation and existing sandbox identity through
+`commandLine`. The executor CLI supplies operation and existing container identity through
 `--operation` and `--container-id`; it can complete an `exec` template from arguments
 after `--` by setting `process.commandLine` before parsing. Trailing commands are
 rejected for every non-exec operation. The Node SDK receives owned response data and
@@ -875,10 +875,10 @@ other state-aware backend, so caller error-handling code is portable across back
 | `backend_unavailable` | The backend's runtime dependency is missing or unreachable (service not running, daemon stopped), or the backend is experimental and the caller did not enable experimental features |
 | `malformed_id` | The `sandboxId` is structurally invalid or has a recognised prefix but does not deserialize into the backend's native form. The TypeScript SDK also uses this code for a prefix outside its closed `StateAwareContainmentBackend` union; typed Rust and raw FFI calls classify a syntactically valid unknown prefix as `unsupported_containment`. |
 | `stale_id` | The `sandboxId` deserialised but refers to a resource the backend no longer recognises |
-| `not_provisioned` | Phase requires a provisioned sandbox; none provided, or the id is in a pre-provision state |
-| `not_started` | Phase requires a started sandbox; the id is provisioned but not started |
-| `already_started` | `start` called on an already-running sandbox |
-| `already_stopped` | `stop` called on an already-stopped sandbox |
+| `not_provisioned` | Phase requires a provisioned container; none provided, or the id is in a pre-provision state |
+| `not_started` | Phase requires a started container; the id is provisioned but not started |
+| `already_started` | `start` called on an already-running container |
+| `already_stopped` | `stop` called on an already-stopped container |
 | `policy_validation` | A request that passed the exact structural contract violates a backend semantic invariant or unsupported value combination |
 | `backend_error` | Catch-all for backend-specific failures; `details` carries structured information |
 
@@ -1498,7 +1498,7 @@ the backend actually implements. Dispatch-wiring mismatches are compile-time err
 not runtime registry checks.
 
 State-aware backends additionally register two consts on their trait impl alongside
-their `ContainmentBackend` variant: `ID_PREFIX` (the sandbox-id tag, used by the
+their `ContainmentBackend` variant: `ID_PREFIX` (the container-id tag, used by the
 dispatcher to resolve non-provision calls to the right backend) and `BACKEND_KEY` (the
 wire-format `containment` value, used for provision-phase routing and checked
 typed binding). Both are described
@@ -1605,7 +1605,7 @@ than silently dropped. An omitted `ui` is accepted and applies no restriction.
 
 For raw exact WindowsSandbox lifecycle requests, filesystem policy
 (readwrite/readonly/denied HOST paths) is
-applied at provision and frozen for the life of the sandbox; later phases reject it.
+applied at provision and frozen for the life of the container; later phases reject it.
 `network` and `ui` are not yet honored at any phase (network isolation is enforced
 unconditionally by the in-guest agent).
 
@@ -1786,21 +1786,21 @@ key docs is updated for any backend addition or significant change.
 ## 12. Failure semantics
 
 State-aware calls can fail at any phase. MXC does not impose a recovery mechanism;
-recovery is the caller's responsibility. This section describes the typical sandbox
+recovery is the caller's responsibility. This section describes the typical container
 state after each phase fails, along with common recovery patterns.
 
-### 12.1 Post-failure sandbox state by phase
+### 12.1 Post-failure container state by phase
 
-| Phase failure | Sandbox state | Typical caller action |
+| Phase failure | Container state | Typical caller action |
 |---|---|---|
 | `provision` fails | No `sandboxId` was returned | Retry, or surface the failure |
-| `start` fails | Sandbox is provisioned but not running | `deprovision` to clean up, or retry `start` |
-| `exec` fails | Sandbox is running (the failure occurred during exec, not before) | Retry `exec`, or proceed to `stop` / `deprovision` |
-| `stop` fails | Ambiguous: sandbox may be stopped, may still be running | Retry `stop`, or `deprovision` and accept potential resource leak from the backend's view |
+| `start` fails | Container is provisioned but not running | `deprovision` to clean up, or retry `start` |
+| `exec` fails | Container is running (the failure occurred during exec, not before) | Retry `exec`, or proceed to `stop` / `deprovision` |
+| `stop` fails | Ambiguous: container may be stopped, may still be running | Retry `stop`, or `deprovision` and accept potential resource leak from the backend's view |
 | `deprovision` fails | Ambiguous: resource may still exist, may have been cleaned up | Treat as best-effort; the next call against the `sandboxId` will surface `stale_id` if the resource is gone |
 
 The "ambiguous" entries are a consequence of MXC's stateless conduit model: MXC does not
-track the sandbox's last-known state, so after a failure the caller and the backend may
+track the container's last-known state, so after a failure the caller and the backend may
 disagree on what state the resource is in. A subsequent call resolves the ambiguity by
 surfacing either success or `stale_id`.
 
@@ -1808,7 +1808,7 @@ surfacing either success or `stale_id`.
 
 If the SDK consumer's process dies while a state-aware call is in flight, the executor
 subprocess may still be running, and the backend's view of the resource depends on
-whether the underlying API call completed before the process died. The sandbox state is
+whether the underlying API call completed before the process died. The container state is
 indeterminate.
 
 Recovery uses the persisted `sandboxId`: on consumer restart, an attempt to
