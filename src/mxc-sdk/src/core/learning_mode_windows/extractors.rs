@@ -51,7 +51,7 @@
 //!   name; custom hashed capabilities fall back to the SID string).
 
 use crate::learning_mode_core::{
-    AccessType, DenialDetails, ResourceType, VerboseLoggingOutcomeReason, VerboseLoggingProvider,
+    AccessType, ResourceType, VerboseLoggingOutcomeReason, VerboseLoggingProvider,
 };
 use crate::mxc_common::hashing::sha256_hex;
 use windows::core::GUID;
@@ -112,8 +112,6 @@ pub struct RawDenial {
     pub access_type: AccessType,
     /// Kernel `FILETIME` of the event.
     pub filetime: u64,
-    /// Optional resource-family-specific metadata.
-    pub details: Option<DenialDetails>,
     /// Originating ETW event ID (kept for diagnostics).
     pub event_id: u16,
     /// Symbolic category of the originating provider, for verbose logging
@@ -749,7 +747,6 @@ pub fn build_denial_from_access_check(
         object_name,
         access_type,
         filetime,
-        details: None,
         event_id: parts.event_id,
         provider,
         verbose_logging_properties: sanitize_properties(&parts.props),
@@ -840,7 +837,6 @@ pub fn build_denial_from_learning_mode(
         object_name,
         access_type: AccessType::Unknown,
         filetime,
-        details: None,
         event_id: parts.event_id,
         provider,
         verbose_logging_properties: sanitize_properties(&parts.props),
@@ -908,7 +904,6 @@ pub fn build_denial_from_capability(
         object_name,
         access_type: AccessType::Unknown,
         filetime,
-        details: None,
         event_id: parts.event_id,
         provider,
         verbose_logging_properties: sanitize_properties(&parts.props),
@@ -2107,6 +2102,18 @@ mod tests {
                 ("Zeta".to_string(), "z".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn sanitize_properties_redacts_network_application_id() {
+        let application_id = r"\Device\HarddiskVolume3\app.exe";
+        let out = sanitize_properties(&[("ApplicationId".to_string(), application_id.to_string())]);
+
+        assert_eq!(
+            out,
+            vec![("ApplicationId".to_string(), REDACTED_PATH.to_string())]
+        );
+        assert!(out.iter().all(|(_, value)| value != application_id));
     }
 
     #[test]

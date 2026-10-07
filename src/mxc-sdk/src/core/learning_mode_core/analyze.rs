@@ -259,7 +259,6 @@ mod tests {
             access_type: AccessType::Read,
             pid: 1,
             filetime: 2,
-            details: None,
         }];
         let analyzer: Box<dyn DenialAnalyzer> = Box::new(FakeAnalyzer(denials.clone()));
         let got = analyzer.analyze(Path::new("ignored.etl")).unwrap();
@@ -324,7 +323,6 @@ mod tests {
                 access_type: AccessType::Read,
                 pid: 1,
                 filetime: 2,
-                details: None,
             }],
             denied_resources_truncated: false,
             verbose_logging: VerboseLoggingSummary {
@@ -390,7 +388,6 @@ mod tests {
                 access_type: AccessType::Read,
                 pid: 1,
                 filetime: 2,
-                details: None,
             }],
             denied_resources_truncated: false,
             verbose_logging: VerboseLoggingSummary {
