@@ -145,6 +145,7 @@ impl SandboxBackend for BubblewrapScriptRunner {
         if let Err(msg) = check_pin_against_denied_hosts(request) {
             return Err(ScriptResponse::error(&msg));
         }
+        warn_uncovered_cwd(request, logger);
         let child = self.spawn_bwrap(request, &plan.files, egress_plan, logger, stdio)?;
         Ok(Box::new(BubblewrapSandboxProcess::new(child)))
     }
@@ -347,6 +348,39 @@ fn warn_unreachable_v6_targets(plan: &network_rules::EgressPlan, logger: &mut Lo
          runtimeConfig.networkProxy, if the workload needs to reach it.",
         targets.len(),
         targets.join(", ")
+    ));
+}
+
+fn warn_uncovered_cwd(request: &ExecutionRequest, logger: &mut Logger) {
+    warn_uncovered_cwd_with(request, logger, |path| {
+        std::fs::canonicalize(path).is_ok_and(|resolved| resolved == Path::new(path))
+    });
+}
+
+fn warn_uncovered_cwd_with(
+    request: &ExecutionRequest,
+    logger: &mut Logger,
+    mut is_canonical: impl FnMut(&str) -> bool,
+) {
+    let Some(dir) = bwrap_command::clearly_uncovered_cwd(request) else {
+        return;
+    };
+    if !is_canonical(&dir)
+        || !request
+            .policy
+            .readwrite_paths
+            .iter()
+            .chain(&request.policy.readonly_paths)
+            .chain(&request.policy.denied_paths)
+            .all(|path| is_canonical(path))
+    {
+        return;
+    }
+    logger.warning_line(&format!(
+        "WARNING: Bubblewrap: process.cwd {dir:?} appears outside the sandbox's \
+         mounted paths. To make it available, list its containing directory in \
+         filesystem.readonlyPaths or filesystem.readwritePaths. Bubblewrap will \
+         decide whether --chdir succeeds."
     ));
 }
 
@@ -1174,6 +1208,30 @@ mod tests {
             script_code: "echo hi".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn cwd_warning_is_retained_only_for_provably_uncovered_paths() {
+        use crate::mxc_common::logger::Mode;
+
+        let mut request = base_request();
+        request.working_directory = "/home/user".into();
+        let mut logger = Logger::new(Mode::Buffer);
+        warn_uncovered_cwd_with(&request, &mut logger, |_| true);
+        assert_eq!(logger.warnings().len(), 1);
+        assert!(logger.warnings()[0].contains("filesystem.readonlyPaths"));
+        assert!(logger.get_buffer().is_empty());
+
+        let mut logger = Logger::new(Mode::Buffer);
+        warn_uncovered_cwd_with(&request, &mut logger, |_| false);
+        assert!(logger.warnings().is_empty());
+
+        request.policy.readonly_paths = vec!["/home/user/data".into()];
+        warn_uncovered_cwd_with(&request, &mut logger, |_| true);
+        assert!(logger.warnings().is_empty());
+        request.policy.readonly_paths = vec!["/other".into()];
+        warn_uncovered_cwd_with(&request, &mut logger, |path| path != "/other");
+        assert!(logger.warnings().is_empty());
     }
 
     /// A request carrying `alice:hunter2@` in its proxy URL, built the way a
