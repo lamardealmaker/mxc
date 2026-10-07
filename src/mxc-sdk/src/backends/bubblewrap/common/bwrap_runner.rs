@@ -145,6 +145,7 @@ impl SandboxBackend for BubblewrapScriptRunner {
         if let Err(msg) = check_pin_against_denied_hosts(request) {
             return Err(ScriptResponse::error(&msg));
         }
+        warn_hidden_resolver(request, logger);
         let child = self.spawn_bwrap(request, &plan.files, egress_plan, logger, stdio)?;
         Ok(Box::new(BubblewrapSandboxProcess::new(child)))
     }
@@ -347,6 +348,52 @@ fn warn_unreachable_v6_targets(plan: &network_rules::EgressPlan, logger: &mut Lo
          runtimeConfig.networkProxy, if the workload needs to reach it.",
         targets.len(),
         targets.join(", ")
+    ));
+}
+
+fn warn_hidden_resolver(request: &ExecutionRequest, logger: &mut Logger) {
+    warn_hidden_resolver_with(
+        request,
+        logger,
+        |path| std::fs::read_link(path).ok(),
+        |path| {
+            std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+                && std::fs::canonicalize(path).is_ok_and(|resolved| resolved == path)
+        },
+        |path| std::fs::canonicalize(path).is_ok_and(|resolved| resolved == Path::new(path)),
+    );
+}
+
+fn warn_hidden_resolver_with(
+    request: &ExecutionRequest,
+    logger: &mut Logger,
+    read_link: impl FnOnce(&Path) -> Option<PathBuf>,
+    is_canonical_file: impl FnOnce(&Path) -> bool,
+    mut is_canonical: impl FnMut(&str) -> bool,
+) {
+    let Some(target) = read_link(Path::new("/etc/resolv.conf")) else {
+        return;
+    };
+    let Some(target_str) = target.to_str() else {
+        return;
+    };
+    if !bwrap_command::clearly_hidden_resolver_target(&request.policy, target_str)
+        || !is_canonical("/etc")
+        || !is_canonical_file(&target)
+        || !request
+            .policy
+            .readwrite_paths
+            .iter()
+            .chain(&request.policy.readonly_paths)
+            .chain(&request.policy.denied_paths)
+            .all(|path| is_canonical(path))
+    {
+        return;
+    }
+    logger.warning_line(&format!(
+        "WARNING: Bubblewrap: /etc/resolv.conf points to {target_str:?}, which appears \
+         outside the sandbox's mounted paths. DNS may fail; list its containing \
+         directory in filesystem.readonlyPaths or repair the resolver link."
     ));
 }
 
@@ -1174,6 +1221,82 @@ mod tests {
             script_code: "echo hi".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn resolver_warning_is_retained_only_for_known_hidden_direct_targets() {
+        use crate::mxc_common::logger::Mode;
+
+        let mut request = base_request();
+        let mut logger = Logger::new(Mode::Buffer);
+        let target = || Some(PathBuf::from("/opt/private/resolv.conf"));
+        warn_hidden_resolver_with(&request, &mut logger, |_| target(), |_| true, |_| true);
+        assert_eq!(logger.warnings().len(), 1);
+        assert!(logger.warnings()[0].contains("filesystem.readonlyPaths"));
+        assert!(logger.get_buffer().is_empty());
+
+        let mut logger = Logger::new(Mode::Buffer);
+        warn_hidden_resolver_with(&request, &mut logger, |_| None, |_| true, |_| true);
+        warn_hidden_resolver_with(&request, &mut logger, |_| target(), |_| false, |_| true);
+        warn_hidden_resolver_with(&request, &mut logger, |_| target(), |_| true, |_| false);
+        warn_hidden_resolver_with(
+            &request,
+            &mut logger,
+            |_| Some(PathBuf::from("/run/systemd/resolve/resolv.conf")),
+            |_| true,
+            |_| true,
+        );
+        request.policy.denied_paths = vec!["/etc".into()];
+        warn_hidden_resolver_with(&request, &mut logger, |_| target(), |_| true, |_| true);
+        assert!(logger.warnings().is_empty());
+    }
+
+    #[test]
+    fn resolver_warning_reads_a_direct_link_without_changing_host_etc() {
+        use crate::mxc_common::logger::Mode;
+        use std::os::unix::fs::symlink;
+
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is required for this test"))
+            .canonicalize()
+            .unwrap();
+        let dir = tempfile::tempdir_in(home).unwrap();
+        let target = dir.path().join("resolver-target");
+        std::fs::write(&target, "nameserver 127.0.0.1\n").unwrap();
+        let link = dir.path().join("resolv.conf");
+        symlink(&target, &link).unwrap();
+        let warn = |request: &ExecutionRequest, logger: &mut Logger| {
+            warn_hidden_resolver_with(
+                request,
+                logger,
+                |_| std::fs::read_link(&link).ok(),
+                |path| {
+                    std::fs::symlink_metadata(path)
+                        .is_ok_and(|metadata| metadata.file_type().is_file())
+                        && std::fs::canonicalize(path).is_ok_and(|resolved| resolved == path)
+                },
+                |path| {
+                    std::fs::canonicalize(path).is_ok_and(|resolved| resolved == Path::new(path))
+                },
+            );
+        };
+        let mut request = base_request();
+        let mut logger = Logger::new(Mode::Buffer);
+        warn(&request, &mut logger);
+        assert_eq!(logger.warnings().len(), 1);
+        assert!(logger.warnings()[0].contains(&target.display().to_string()));
+        assert!(logger.warnings()[0].contains("filesystem.readonlyPaths"));
+        assert!(logger.get_buffer().is_empty());
+
+        request.policy.readonly_paths = vec![dir.path().display().to_string()];
+        let mut covered_logger = Logger::new(Mode::Buffer);
+        warn(&request, &mut covered_logger);
+        assert!(covered_logger.warnings().is_empty());
+
+        std::fs::remove_file(&link).unwrap();
+        std::fs::write(&link, "nameserver 127.0.0.1\n").unwrap();
+        let mut regular_logger = Logger::new(Mode::Buffer);
+        warn(&request, &mut regular_logger);
+        assert!(regular_logger.warnings().is_empty());
     }
 
     /// A request carrying `alice:hunter2@` in its proxy URL, built the way a

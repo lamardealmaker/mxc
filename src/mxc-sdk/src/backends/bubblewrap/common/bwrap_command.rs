@@ -10,6 +10,8 @@
 use std::collections::HashSet;
 
 use crate::mxc_common::filesystem_resolve::FsIntent;
+#[cfg(any(target_os = "linux", test))]
+use crate::mxc_common::models::ContainerPolicy;
 use crate::mxc_common::models::{ExecutionRequest, NetworkAction, ProxyAddress};
 use crate::mxc_common::proxy_env::{is_managed_proxy_key, PROXY_SET_KEYS};
 
@@ -93,6 +95,52 @@ const BASELINE_RO_BIND_PATHS: &[&str] = &[
     // because the baseline is emitted via `--ro-bind-try`.
     "/mnt/wsl/resolv.conf",
 ];
+
+/// A custom absolute resolver target is hidden only when no emitted mount
+/// destination can cover it or create it as a synthetic parent.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn clearly_hidden_resolver_target(policy: &ContainerPolicy, target: &str) -> bool {
+    if target == "/"
+        || !target.starts_with('/')
+        || target.split('/').any(|part| part == "." || part == "..")
+    {
+        return false;
+    }
+
+    let mut policy_mounts = policy
+        .readwrite_paths
+        .iter()
+        .chain(&policy.readonly_paths)
+        .chain(&policy.denied_paths)
+        .map(String::as_str);
+    for mount in BASELINE_RO_BIND_PATHS
+        .iter()
+        .copied()
+        .chain(["/dev", "/proc", "/tmp", "/var/run"])
+        .chain(policy_mounts.clone())
+    {
+        if !mount.starts_with('/')
+            || mount.split('/').any(|part| part == "." || part == "..")
+            || paths_overlap(target, mount)
+        {
+            return false;
+        }
+    }
+
+    // A policy mount at the link (or an ancestor) replaces the host /etc
+    // entry, so the presence of its target alone would not explain DNS.
+    !policy_mounts.any(|mount| paths_overlap("/etc/resolv.conf", mount))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn paths_overlap(a: &str, b: &str) -> bool {
+    fn within(path: &str, parent: &str) -> bool {
+        parent == "/" && path.starts_with('/')
+            || path == parent
+            || (path.starts_with(parent) && path.as_bytes().get(parent.len()) == Some(&b'/'))
+    }
+    within(a, b) || within(b, a)
+}
 
 /// The networking behavior Bubblewrap applies for one execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -443,6 +491,90 @@ mod tests {
             working_directory: "/home/user".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn custom_resolver_target_is_hidden_only_without_mount_overlap() {
+        let mut policy = ContainerPolicy::default();
+        assert!(clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        for covered in [
+            "/run/systemd/resolve/resolv.conf",
+            "/var/run/NetworkManager/resolv.conf",
+            "/mnt/wsl/resolv.conf",
+            "/etc/resolv.conf",
+            "/tmp/resolv.conf",
+        ] {
+            assert!(
+                !clearly_hidden_resolver_target(&policy, covered),
+                "{covered}"
+            );
+        }
+        policy.readonly_paths = vec!["/opt/private".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        policy.readonly_paths = vec!["/opt/private/resolv.conf/child".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        policy.readonly_paths = vec!["/opt/private2".into()];
+        assert!(clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        policy.readonly_paths = vec!["/".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+    }
+
+    #[test]
+    fn resolver_diagnostic_recognizes_every_emitted_mount_destination() {
+        let policy = ContainerPolicy::default();
+        let args = build_args(&base_request(), None);
+        for triple in args.windows(3) {
+            if matches!(
+                triple[0].as_str(),
+                "--ro-bind-try" | "--ro-bind" | "--bind" | "--symlink"
+            ) {
+                assert!(
+                    !clearly_hidden_resolver_target(&policy, &triple[2]),
+                    "unrecognized mount destination: {triple:?}"
+                );
+            }
+        }
+        for pair in args.windows(2) {
+            if matches!(pair[0].as_str(), "--dev" | "--proc" | "--tmpfs") {
+                assert!(
+                    !clearly_hidden_resolver_target(&policy, &pair[1]),
+                    "unrecognized virtual mount destination: {pair:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ambiguous_resolver_paths_and_shadowed_link_do_not_warn() {
+        let mut policy = ContainerPolicy::default();
+        for target in ["relative/resolv.conf", "/opt/../secret/resolv.conf", "/"] {
+            assert!(!clearly_hidden_resolver_target(&policy, target));
+        }
+        policy.denied_paths = vec!["/etc".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        policy.denied_paths = vec!["/alias/../etc".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
     }
 
     /// `process.env` resolution, which schema 0.9 gave a default block.
