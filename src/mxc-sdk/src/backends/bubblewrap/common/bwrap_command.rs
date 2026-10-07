@@ -134,12 +134,9 @@ pub(crate) fn clearly_hidden_resolver_target(policy: &ContainerPolicy, target: &
 
 #[cfg(any(target_os = "linux", test))]
 fn paths_overlap(a: &str, b: &str) -> bool {
-    fn within(path: &str, parent: &str) -> bool {
-        parent == "/" && path.starts_with('/')
-            || path == parent
-            || (path.starts_with(parent) && path.as_bytes().get(parent.len()) == Some(&b'/'))
-    }
-    within(a, b) || within(b, a)
+    let a = std::path::Path::new(a);
+    let b = std::path::Path::new(b);
+    a.starts_with(b) || b.starts_with(a)
 }
 
 /// The networking behavior Bubblewrap applies for one execution.
@@ -517,6 +514,13 @@ mod tests {
             &policy,
             "/opt/private/resolv.conf"
         ));
+        for mount in ["/opt/private/", "/opt//private/"] {
+            policy.readonly_paths = vec![mount.into()];
+            assert!(
+                !clearly_hidden_resolver_target(&policy, "/opt/private/resolv.conf"),
+                "{mount}"
+            );
+        }
         policy.readonly_paths = vec!["/opt/private/resolv.conf/child".into()];
         assert!(!clearly_hidden_resolver_target(
             &policy,
@@ -566,6 +570,11 @@ mod tests {
             assert!(!clearly_hidden_resolver_target(&policy, target));
         }
         policy.denied_paths = vec!["/etc".into()];
+        assert!(!clearly_hidden_resolver_target(
+            &policy,
+            "/opt/private/resolv.conf"
+        ));
+        policy.denied_paths = vec!["/etc//".into()];
         assert!(!clearly_hidden_resolver_target(
             &policy,
             "/opt/private/resolv.conf"
